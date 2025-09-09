@@ -4,4 +4,19 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "structlog>=25.4.0",
+    "undetected-chromedriver>=3.5.5",
+]
+
+# Optional: authors, license
+authors = [{ name = "Venky Maganahalli" }]
+license = { text = "Proprietary" }
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["product_assistant*"]

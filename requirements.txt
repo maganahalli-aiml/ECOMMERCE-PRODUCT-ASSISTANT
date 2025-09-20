@@ -1,3 +1,4 @@
+tavily-python
 beautifulsoup4==4.13.5
 fastapi==0.116.1
 html5lib==1.1
@@ -15,3 +16,8 @@ streamlit==1.49.1
 undetected-chromedriver==3.5.5
 uvicorn==0.35.0
 structlog==25.4.0
+langchain-community==0.3.29
+pypdf==3.16.0
+langgraph==0.6.7
+ragas==0.1.0
+-e .

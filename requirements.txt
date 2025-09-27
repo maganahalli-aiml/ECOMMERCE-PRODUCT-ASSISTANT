@@ -20,4 +20,7 @@ langchain-community==0.3.29
 pypdf==3.16.0
 langgraph==0.6.7
 ragas==0.1.0
+langchain-mcp-adapters==0.1.10
+mcp==1.14.0
+ddgs==9.6.0
 -e .

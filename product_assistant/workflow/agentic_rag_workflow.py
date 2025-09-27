@@ -126,7 +126,8 @@ class AgenticRAG:
         import logging
         logging.info("Invoking vector DB lookup for query.")
         print("--- RETRIEVER ---")
-        query = state["messages"][-1].content
+        # Get the original user query (first message), not the "TOOL: retriever" message
+        query = state["messages"][0].content
         retriever = self.retriever_obj.load_retriever()
         docs = retriever.invoke(query)
         # Log all retrieved docs and their metadata
@@ -218,7 +219,8 @@ class AgenticRAG:
     def _web_search_node(self, state: 'AgenticRAG.AgentState'):
         import re
         print("--- WEB SEARCH ---")
-        query = state["messages"][-1].content
+        # Get the original user query (first message), not the "TOOL: websearch" message
+        query = state["messages"][0].content
         context = self.web_search(query)
         indicator = "[Source: Web Search]"
         # Normalize query and context for comparison

@@ -175,6 +175,19 @@
                         </div>`;
                     $("#messageFormeight").append(botHtml);
                     $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
+                }).fail(function(xhr, status, error) {
+                    console.log("AJAX Error:", status, error);
+                    console.log("Response:", xhr.responseText);
+                    var errorHtml = `
+                        <div class="d-flex justify-content-start mb-2">
+                            <img src="https://static.vecteezy.com/system/resources/previews/016/017/018/non_2x/ecommerce-icon-free-png.png" class="rounded-circle user_img_msg">
+                            <div class="msg_cotainer" style="background-color: #ffebee;">
+                                <span style="color: #c62828;">Sorry, there was an error processing your request. Please try again.</span>
+                                <div class="msg_time">${str_time}</div>
+                            </div>
+                        </div>`;
+                    $("#messageFormeight").append(errorHtml);
+                    $("#messageFormeight").scrollTop($("#messageFormeight")[0].scrollHeight);
                 });
 
                 event.preventDefault();

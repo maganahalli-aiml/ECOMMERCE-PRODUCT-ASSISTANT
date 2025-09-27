@@ -29,14 +29,14 @@ class DataIngestion:
         """
         load_dotenv()
         
-        required_vars = ["GOOGLE_API_KEY", "ASTRA_DB_API_ENDPOINT", "ASTRA_DB_APPLICATION_TOKEN", "ASTRA_DB_KEYSPACE"]
+        required_vars = ["GOOGLE_API_KEY", "ASTRA_DB_DATABASE_ID", "ASTRA_DB_APPLICATION_TOKEN", "ASTRA_DB_KEYSPACE"]
         
         missing_vars = [var for var in required_vars if os.getenv(var) is None]
         if missing_vars:
             raise EnvironmentError(f"Missing environment variables: {missing_vars}")
         
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.db_api_endpoint = os.getenv("ASTRA_DB_API_ENDPOINT")
+        self.db_database_id = os.getenv("ASTRA_DB_DATABASE_ID")
         self.db_application_token = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
         self.db_keyspace = os.getenv("ASTRA_DB_KEYSPACE")
 
@@ -103,10 +103,14 @@ class DataIngestion:
         Store documents into AstraDB vector store.
         """
         collection_name=self.config["astra_db"]["collection_name"]
+        
+        # Construct the full AstraDB endpoint URL
+        api_endpoint = f"https://{self.db_database_id}-us-east-2.apps.astra.datastax.com"
+        
         vstore = AstraDBVectorStore(
             embedding= self.model_loader.load_embeddings(),
             collection_name=collection_name,
-            api_endpoint=self.db_api_endpoint,
+            api_endpoint=api_endpoint,
             token=self.db_application_token,
             namespace=self.db_keyspace,
         )

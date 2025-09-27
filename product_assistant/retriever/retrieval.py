@@ -42,6 +42,7 @@ class Retriever:
 
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
         self.db_api_endpoint = os.getenv("ASTRA_DB_API_ENDPOINT")
+        self.db_database_id = os.getenv("ASTRA_DB_DATABASE_ID")
         self.db_application_token = os.getenv("ASTRA_DB_APPLICATION_TOKEN")
         self.db_keyspace = os.getenv("ASTRA_DB_KEYSPACE")
     
@@ -51,10 +52,13 @@ class Retriever:
         if not self.vstore:
             collection_name = self.config["astra_db"]["collection_name"]
             
+            # Construct the full AstraDB endpoint URL
+            api_endpoint = f"https://{self.db_database_id}-us-east-2.apps.astra.datastax.com"
+            
             self.vstore =AstraDBVectorStore(
                 embedding= self.model_loader.load_embeddings(),
                 collection_name=collection_name,
-                api_endpoint=self.db_api_endpoint,
+                api_endpoint=api_endpoint,
                 token=self.db_application_token,
                 namespace=self.db_keyspace,
                 )

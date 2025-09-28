@@ -14,6 +14,10 @@ Parameters:
   ECRRepositoryName:
     Type: String
     Default: product-assistant
+  AdditionalUserArn:
+    Type: String
+    Default: arn:aws:iam::484907489651:user/itadmin
+    Description: ARN of additional IAM user to grant EKS access
 
 Resources:
   ### --- VPC ---
@@ -139,6 +143,28 @@ Resources:
           - !Ref PublicSubnet2
         SecurityGroupIds:
           - !Ref EKSSecurityGroup
+      AccessConfig:
+        AuthenticationMode: API_AND_CONFIG_MAP
+        BootstrapClusterCreatorAdminPermissions: true
+
+  ### --- EKS Access Entry for Additional User ---
+  EKSAccessEntry:
+    Type: AWS::EKS::AccessEntry
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      PrincipalArn: !Ref AdditionalUserArn
+      Type: STANDARD
+
+  EKSAccessPolicy:
+    Type: AWS::EKS::AccessPolicyAssociation
+    DependsOn: EKSAccessEntry
+    Properties:
+      ClusterName: !Ref ClusterName
+      PrincipalArn: !Ref AdditionalUserArn
+      PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
+      AccessScope:
+        Type: cluster
 
   ### --- IAM Role for NodeGroup ---
   NodeGroupRole:

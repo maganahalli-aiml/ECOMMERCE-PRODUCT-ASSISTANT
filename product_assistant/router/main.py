@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 
-from product_assistant.workflow.agentic_rag_workflow import AgenticRAG
+from product_assistant.workflow.agentic_workflow_with_mcp_websearch import AgenticRAG
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")

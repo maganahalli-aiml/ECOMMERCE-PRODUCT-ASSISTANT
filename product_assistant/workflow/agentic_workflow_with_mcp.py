@@ -10,6 +10,7 @@ from product_assistant.retriever.retrieval import Retriever
 from product_assistant.utils.model_loader import ModelLoader
 from langgraph.checkpoint.memory import MemorySaver
 import asyncio
+import signal
 from product_assistant.evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
@@ -19,6 +20,7 @@ class AgenticRAG:
 
     class AgentState(TypedDict):
         messages: Annotated[Sequence[BaseMessage], add_messages]
+        retry_count: int
 
     def __init__(self):
         self.retriever_obj = Retriever()
@@ -26,16 +28,44 @@ class AgenticRAG:
         self.llm = self.model_loader.load_llm()
         self.checkpointer = MemorySaver()
         
-        # MCP Client Init
-        self.mcp_client = MultiServerMCPClient({
-            "product_retriever": {
-                "command": "python",
-                "args": ["prod_assistant/mcp_servers/product_search_server.py"],  # absolute path recommended
-                "transport": "stdio"
-            }
-        })
-        # Load MCP tools (async ko sync wrapper me call karna hoga)
-        self.mcp_tools = asyncio.run(self.mcp_client.get_tools())
+        # MCP Client Init with fallback
+        self.mcp_tools = []
+        self.mcp_enabled = False
+        
+        try:
+            import os
+            current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            server_path = os.path.join(current_dir, "product_assistant", "mcp_servers", "product_search_server.py")
+            
+            if os.path.exists(server_path):
+                self.mcp_client = MultiServerMCPClient({
+                    "product_retriever": {
+                        "command": "python",
+                        "args": [server_path],
+                        "transport": "stdio"
+                    }
+                })
+                # Load MCP tools with timeout
+                import signal
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("MCP initialization timeout")
+                
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(10)  # 10 second timeout
+                
+                try:
+                    self.mcp_tools = asyncio.run(self.mcp_client.get_tools())
+                    self.mcp_enabled = True
+                    print("MCP tools loaded successfully")
+                except Exception as e:
+                    print(f"Warning: MCP tools failed to load: {e}")
+                finally:
+                    signal.alarm(0)  # Cancel the alarm
+            else:
+                print(f"MCP server not found at {server_path}")
+                
+        except Exception as e:
+            print(f"Warning: MCP initialization failed: {e}")
 
         
         self.workflow = self._build_workflow()
@@ -74,13 +104,28 @@ class AgenticRAG:
             return {"messages": [HumanMessage(content=response)]}
 
     def _vector_retriever(self, state: AgentState):
-        print("--- RETRIEVER (MCP) ---")
-        query = state["messages"][-1].content
-        # Find the tool by name
-        tool = next(t for t in self.mcp_tools if t.name == "get_product_info")
-        # Call the tool (sync wrapper)
-        result = asyncio.run(tool.ainvoke({"query": query}))
-        context = result if result else "No data"
+        print("--- RETRIEVER (MCP/Fallback) ---")
+        query = state["messages"][0].content  # Use original query instead of last message
+        
+        # Check if MCP tools are available and enabled
+        if self.mcp_enabled and self.mcp_tools:
+            try:
+                # Find the tool by name
+                tool = next((t for t in self.mcp_tools if t.name == "get_product_info"), None)
+                if tool:
+                    # Call the tool (sync wrapper)
+                    result = asyncio.run(tool.ainvoke({"query": query}))
+                    context = result if result else "No MCP data found"
+                    print(f"MCP result: {context[:100]}...")
+                    return {"messages": [HumanMessage(content=context)]}
+            except Exception as e:
+                print(f"MCP tool error: {e}, falling back to regular retrieval")
+        
+        # Fallback to regular retrieval
+        print("Using regular vector retrieval")
+        docs = self.retriever_obj.retrieve(query)
+        context = self._format_docs(docs)
+        print(f"Retrieved {len(docs) if docs else 0} documents")
         return {"messages": [HumanMessage(content=context)]}
 
     def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
@@ -88,14 +133,14 @@ class AgenticRAG:
         question = state["messages"][0].content
         docs = state["messages"][-1].content
 
-        prompt = PromptTemplate(
-            template="""You are a grader. Question: {question}\nDocs: {docs}\n
-            Are docs relevant to the question? Answer yes or no.""",
-            input_variables=["question", "docs"],
-        )
-        chain = prompt | self.llm | StrOutputParser()
-        score = chain.invoke({"question": question, "docs": docs})
-        return "generator" if "yes" in score.lower() else "rewriter"
+        # More lenient grading - if we have any content, proceed to generation
+        if docs and docs.strip() and "No" not in docs and len(docs.strip()) > 10:
+            print("Documents seem relevant, proceeding to generation")
+            return "generator"
+        
+        # Only rewrite if we have truly empty or minimal content
+        print("Documents not sufficient, rewriting query")
+        return "rewriter"
 
     def _generate(self, state: AgentState):
         print("--- GENERATE ---")
@@ -110,6 +155,13 @@ class AgenticRAG:
 
     def _rewrite(self, state: AgentState):
         print("--- REWRITE ---")
+        retry_count = state.get("retry_count", 0)
+        
+        # Prevent infinite loops - max 2 rewrites
+        if retry_count >= 2:
+            print("Max rewrites reached, using original query")
+            return {"messages": [HumanMessage(content=state["messages"][0].content)]}
+        
         question = state["messages"][0].content
         prompt = ChatPromptTemplate.from_template(
             "Rewrite this user query to make it more clear and specific for a search engine. "
@@ -117,7 +169,7 @@ class AgenticRAG:
         )
         chain = prompt | self.llm | StrOutputParser()
         new_q = chain.invoke({"question": question})
-        return {"messages": [HumanMessage(content=new_q.strip())]}
+        return {"messages": [HumanMessage(content=new_q.strip())], "retry_count": retry_count + 1}
 
     # ---------- Build Workflow ----------
     def _build_workflow(self):
@@ -143,10 +195,12 @@ class AgenticRAG:
         return workflow
 
     # ---------- Public Run ----------
-    def run(self, query: str,thread_id: str = "default_thread") -> str:
+    def run(self, query: str, thread_id: str = "default_thread") -> str:
         """Run the workflow for a given query and return the final answer."""
-        result = self.app.invoke({"messages": [HumanMessage(content=query)]},
-                                 config={"configurable": {"thread_id": thread_id}})
+        result = self.app.invoke(
+            {"messages": [HumanMessage(content=query)], "retry_count": 0},
+            config={"configurable": {"thread_id": thread_id}}
+        )
         return result["messages"][-1].content
     
 if __name__ == "__main__":

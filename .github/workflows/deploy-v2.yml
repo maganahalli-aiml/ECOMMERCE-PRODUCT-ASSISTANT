@@ -1,0 +1,124 @@
+name: CI/CD to EKS (v2)
+
+on:
+  push:
+    branches:
+      - master   # Updated to use master branch
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to avoid caching issues
+
+      # Debug step to verify we have the correct version
+      - name: Verify workflow version
+        run: |
+          echo "=== WORKFLOW VERSION DEBUG ==="
+          echo "Current commit hash:"
+          git rev-parse HEAD
+          echo "Last commit message:"
+          git log -1 --pretty=format:"%s"
+          echo "Current timestamp: $(date)"
+          echo "=== END DEBUG ==="
+
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Deploy CloudFormation Stack
+        run: |
+          echo "Deploying CloudFormation stack..."
+          aws cloudformation deploy \
+            --stack-name product-assistant-cluster \
+            --template-file infra/eks-with-ecr.yaml \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+          echo "CloudFormation stack deployment completed"
+
+      # Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'
+
+      # Build, tag and push docker image to ECR
+      - name: Build and Push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: product-assistant
+        run: |
+          IMAGE_TAG=latest
+          echo "Building Docker image..."
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          echo "Pushing Docker image to ECR..."
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          echo "Docker image pushed successfully: $REGISTRY/$REPOSITORY:$IMAGE_TAG"
+
+      # Setup kubectl
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      # Update kubeconfig for EKS
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name product-assistant-cluster --region ${{ secrets.AWS_REGION }}
+
+      # ✅ NEW APPROACH: Force delete and recreate secret
+      - name: Force Update Kubernetes secret for API keys
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ASTRA_DB_API_ENDPOINT: ${{ secrets.ASTRA_DB_API_ENDPOINT }}
+          ASTRA_DB_APPLICATION_TOKEN: ${{ secrets.ASTRA_DB_APPLICATION_TOKEN }}
+          ASTRA_DB_KEYSPACE: ${{ secrets.ASTRA_DB_KEYSPACE }}
+        run: |
+          echo "=== MANAGING KUBERNETES SECRET ==="
+          echo "Timestamp: $(date)"
+          
+          # First, delete the existing secret (ignore if it doesn't exist)
+          echo "Deleting existing secret..."
+          kubectl delete secret product-assistant-secrets --ignore-not-found=true
+          echo "Secret deletion completed (or didn't exist)"
+          
+          # Wait a moment to ensure deletion is complete
+          sleep 2
+          
+          # Create the secret fresh
+          echo "Creating new secret..."
+          kubectl create secret generic product-assistant-secrets \
+            --from-literal=GROQ_API_KEY="${GROQ_API_KEY}" \
+            --from-literal=ASTRA_DB_API_ENDPOINT="${ASTRA_DB_API_ENDPOINT}" \
+            --from-literal=ASTRA_DB_APPLICATION_TOKEN="${ASTRA_DB_APPLICATION_TOKEN}" \
+            --from-literal=ASTRA_DB_KEYSPACE="${ASTRA_DB_KEYSPACE}"
+          
+          echo "Secret created successfully!"
+          
+          # Verify the secret exists
+          echo "Verifying secret creation..."
+          kubectl get secret product-assistant-secrets -o yaml
+          echo "=== SECRET MANAGEMENT COMPLETED ==="
+
+      # Deploy to EKS using kubectl
+      - name: Deploy to EKS
+        run: |
+          kubectl apply -f k8/deployment.yaml
+          kubectl apply -f k8/service.yaml
+
+      # Verify rollout
+      - name: Verify Deployment
+        run: |
+          kubectl rollout status deployment/product-assistant
+          kubectl get svc product-assistant-service

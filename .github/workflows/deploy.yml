@@ -24,27 +24,35 @@ jobs:
 
       - name: Deploy CloudFormation Stack
         run: |
+          echo "Deploying CloudFormation stack..."
           aws cloudformation deploy \
             --stack-name product-assistant-cluster \
             --template-file infra/eks-with-ecr.yaml \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+          echo "CloudFormation stack deployment completed"
 
 
       # Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'
 
       # Build, tag and push docker image to ECR
       - name: Build and Push Docker image
         env:
-          REGISTRY: ${{ secrets.ECR_REGISTRY }}
-          REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: product-assistant
         run: |
           IMAGE_TAG=latest
+          echo "Building Docker image..."
           docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          echo "Pushing Docker image to ECR..."
           docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          echo "Docker image pushed successfully: $REGISTRY/$REPOSITORY:$IMAGE_TAG"
 
       # Setup kubectl
       - name: Setup kubectl
@@ -55,14 +63,13 @@ jobs:
       # Update kubeconfig for EKS
       - name: Update kubeconfig
         run: |
-          aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+          aws eks update-kubeconfig --name product-assistant-cluster --region ${{ secrets.AWS_REGION }}
 
       # ✅ NEW STEP: Create/Update Kubernetes Secret
       - name: Create Kubernetes secret for API keys
         run: |
           kubectl create secret generic product-assistant-secrets \
             --from-literal=GROQ_API_KEY=${{ secrets.GROQ_API_KEY }} \
-            --from-literal=GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }} \
             --from-literal=ASTRA_DB_API_ENDPOINT=${{ secrets.ASTRA_DB_API_ENDPOINT }} \
             --from-literal=ASTRA_DB_APPLICATION_TOKEN=${{ secrets.ASTRA_DB_APPLICATION_TOKEN }} \
             --from-literal=ASTRA_DB_KEYSPACE=${{ secrets.ASTRA_DB_KEYSPACE }} \

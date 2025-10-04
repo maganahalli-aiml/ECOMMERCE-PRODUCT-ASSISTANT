@@ -71,7 +71,7 @@ class ModelLoader:
 
     def load_embeddings(self):
         """
-        Load and return embedding model from Google Generative AI.
+        Load and return embedding model from groq Generative AI.
         """
         try:
             model_name = self.config["embedding_model"]["model_name"]
